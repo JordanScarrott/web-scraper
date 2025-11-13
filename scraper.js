@@ -8,8 +8,8 @@ const START_URL =
 const OUTPUT_DIR = path.join(__dirname, "projects");
 
 // --- Selectors ---
-const GALLERY_ITEM_SELECTOR = "div.gallery-item a.link-to-software";
-const NEXT_PAGE_SELECTOR = 'a[rel="next"]';
+const GALLERY_ITEM_SELECTOR = "div.gallery-item";
+const NEXT_PAGE_SELECTOR = 'li.next_page a[rel="next"]';
 const DETAIL_CONTENT_SELECTOR = "#app-details-left";
 const DETAIL_TITLE_SELECTOR = "h1"; // Relative to the content selector
 
@@ -55,20 +55,19 @@ async function main() {
     });
     const page = await context.newPage();
 
-    let currentPageUrl = START_URL;
-    let pageCount = 1;
+    const TOTAL_PAGES = 41;
 
     try {
         // 3. Start pagination loop
-        while (currentPageUrl) {
+        for (let pageCount = 1; pageCount <= TOTAL_PAGES; pageCount++) {
+            const currentPageUrl = `${START_URL}&page=${pageCount}`;
             console.log(`\n--- Scraping Page ${pageCount} ---`);
             console.log(`URL: ${currentPageUrl}`);
 
-            if (pageCount === 1) {
-                await page.goto(currentPageUrl, {
-                    waitUntil: "domcontentloaded",
-                });
-            }
+            await page.goto(currentPageUrl, {
+                waitUntil: "domcontentloaded",
+                timeout: 60000,
+            });
 
             // 4. Find all project links on the current page
             await page.waitForSelector(GALLERY_ITEM_SELECTOR, {
@@ -77,21 +76,34 @@ async function main() {
             const projectLocators = page.locator(GALLERY_ITEM_SELECTOR);
 
             // Get all links first to avoid navigation issues
-            const projectLinks = await projectLocators.evaluateAll((list) =>
-                list.map((el) => el.href)
+            const projects = await projectLocators.evaluateAll((items) =>
+                items.map((item) => {
+                    const linkElement = item.querySelector(
+                        "a.link-to-software"
+                    );
+                    const titleElement = item.querySelector("h5");
+                    return {
+                        link: linkElement ? linkElement.href : null,
+                        title: titleElement
+                            ? titleElement.textContent.trim()
+                            : "Untitled",
+                    };
+                })
             );
 
-            console.log(`Found ${projectLinks.length} projects on this page.`);
+            console.log(`Found ${projects.length} projects on this page.`);
 
             // 5. Iterate through each project link
-            for (let i = 0; i < projectLinks.length; i++) {
-                const link = projectLinks[i];
+            for (let i = 0; i < projects.length; i++) {
+                const project = projects[i];
+                const link = project.link;
                 let projectPage;
                 try {
                     // Open project in a new tab for stability
                     projectPage = await context.newPage();
                     await projectPage.goto(link, {
                         waitUntil: "domcontentloaded",
+                        timeout: 60000,
                     });
 
                     // 6. Extract data from the detail page
@@ -103,11 +115,8 @@ async function main() {
                     // timeout: 10000,
                     // });
 
-                    // Get title
-                    const title = await contentLocator
-                        .locator(DETAIL_TITLE_SELECTOR)
-                        .textContent();
-                    const sanitized = sanitizeTitle(title);
+                    // Get title from the gallery data we already scraped
+                    const sanitized = sanitizeTitle(project.title);
 
                     // Get all text content
                     const allContent = await contentLocator.textContent();
@@ -121,7 +130,7 @@ async function main() {
                         allContent || "No content found."
                     );
                     console.log(
-                        `(${i + 1}/${projectLinks.length}) Saved: ${fileName}`
+                        `(${i + 1}/${projects.length}) Saved: ${fileName}`
                     );
                 } catch (err) {
                     console.error(
@@ -134,19 +143,8 @@ async function main() {
                 }
             }
 
-            // 8. Find and click the "Next" button
-            const nextButton = page.locator(NEXT_PAGE_SELECTOR);
-            if (await nextButton.isVisible()) {
-                console.log("Navigating to next page...");
-                await nextButton.click();
-                await page.waitForLoadState("domcontentloaded"); // Wait for new page to load
-                currentPageUrl = page.url(); // Get new URL for the loop
-                pageCount++;
-            } else {
-                console.log('No "Next" button found. Scraping complete.');
-                currentPageUrl = null; // Exit the loop
-            }
         }
+        console.log("\nScraping complete.");
     } catch (error) {
         console.error(`An error occurred: ${error.message}`);
     } finally {
