@@ -8,7 +8,7 @@ const START_URL =
 const OUTPUT_DIR = path.join(__dirname, "projects");
 
 // --- Selectors ---
-const GALLERY_ITEM_SELECTOR = "div.gallery-item a.link-to-software";
+const GALLERY_ITEM_SELECTOR = "div.gallery-item";
 const NEXT_PAGE_SELECTOR = 'a[rel="next"]';
 const DETAIL_CONTENT_SELECTOR = "#app-details-left";
 const DETAIL_TITLE_SELECTOR = "h1"; // Relative to the content selector
@@ -67,6 +67,7 @@ async function main() {
             if (pageCount === 1) {
                 await page.goto(currentPageUrl, {
                     waitUntil: "domcontentloaded",
+                    timeout: 60000,
                 });
             }
 
@@ -77,21 +78,34 @@ async function main() {
             const projectLocators = page.locator(GALLERY_ITEM_SELECTOR);
 
             // Get all links first to avoid navigation issues
-            const projectLinks = await projectLocators.evaluateAll((list) =>
-                list.map((el) => el.href)
+            const projects = await projectLocators.evaluateAll((items) =>
+                items.map((item) => {
+                    const linkElement = item.querySelector(
+                        "a.link-to-software"
+                    );
+                    const titleElement = item.querySelector("h5");
+                    return {
+                        link: linkElement ? linkElement.href : null,
+                        title: titleElement
+                            ? titleElement.textContent.trim()
+                            : "Untitled",
+                    };
+                })
             );
 
-            console.log(`Found ${projectLinks.length} projects on this page.`);
+            console.log(`Found ${projects.length} projects on this page.`);
 
             // 5. Iterate through each project link
-            for (let i = 0; i < projectLinks.length; i++) {
-                const link = projectLinks[i];
+            for (let i = 0; i < projects.length; i++) {
+                const project = projects[i];
+                const link = project.link;
                 let projectPage;
                 try {
                     // Open project in a new tab for stability
                     projectPage = await context.newPage();
                     await projectPage.goto(link, {
                         waitUntil: "domcontentloaded",
+                        timeout: 60000,
                     });
 
                     // 6. Extract data from the detail page
@@ -103,11 +117,8 @@ async function main() {
                     // timeout: 10000,
                     // });
 
-                    // Get title
-                    const title = await contentLocator
-                        .locator(DETAIL_TITLE_SELECTOR)
-                        .textContent();
-                    const sanitized = sanitizeTitle(title);
+                    // Get title from the gallery data we already scraped
+                    const sanitized = sanitizeTitle(project.title);
 
                     // Get all text content
                     const allContent = await contentLocator.textContent();
@@ -121,7 +132,7 @@ async function main() {
                         allContent || "No content found."
                     );
                     console.log(
-                        `(${i + 1}/${projectLinks.length}) Saved: ${fileName}`
+                        `(${i + 1}/${projects.length}) Saved: ${fileName}`
                     );
                 } catch (err) {
                     console.error(
